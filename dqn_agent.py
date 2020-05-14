@@ -13,13 +13,15 @@ BATCH_SIZE = 64         # minibatch size
 GAMMA = 0.99            # discount factor
 LR = 5e-4               # learning rate
 UPDATE_EVERY = 1000     # how often to update the target network
+ALPHA = 0.6             # alpha parameter for prioritized experience replay
+EPS = 1e-6              # small constant for prioritized experience replay
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class Agent():
     def __init__(self, state_size, action_size, seed, 
                  hidden_layers, drop_p = 0.5, 
-                 double_dqn = True, prioritized_replay = True):
+                 double_dqn = False, prioritized_replay = False):
         """Initialize an Agent object.
 
            Arguments
@@ -141,3 +143,26 @@ class ReplayBuffer():
     def __len__(self):
         """Return the current size of internal memory."""
         return len(self.memory)
+
+class PrioritizedReplayBuffer():
+    def __init__(self, action_size, buffer_size, batch_size, seed, alpha = ALPHA, eps = EPS):
+        """Initialize a Prioritized ReplayBuffer object.
+
+           Arguments
+           ---------
+           action_size (int): Total number of possible actions
+           buffer_size (int): Maximum size of buffer
+           batch_size (int): Size of each training batch
+           seed (int): Random seed
+           alpha (float): Alpha parameter
+           eps (float): small constant added to priority
+        """
+        self.action_size = action_size
+        self.memory = deque(maxlen = buffer_size)
+        self.priority = deque(maxlen = buffer_size)
+        self.batch_size = batch_size
+        self.experience = namedtuple("Experience", field_names = ["state", "action", "reward", "next_state", "done"])
+        self.seed = random.seed(seed)
+        self.alpha = alpha
+        self.eps = eps
+        self.max_priority = 1.0
