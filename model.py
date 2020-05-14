@@ -26,6 +26,6 @@ class QNetwork(nn.Module):
         """Forward pass through the network."""
         for linear in self.hidden_layers:
             state = F.relu(linear(state))
-            state = self.dropout(state)
+            # state = self.dropout(state)
         state = self.output(state)
         return state
