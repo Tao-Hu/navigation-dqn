@@ -17,7 +17,9 @@ UPDATE_EVERY = 1000     # how often to update the target network
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class Agent():
-    def __init__(self, state_size, action_size, seed, hidden_layers, drop_p = 0.5):
+    def __init__(self, state_size, action_size, seed, 
+                 hidden_layers, drop_p = 0.5, 
+                 double_dqn = True, prioritized_replay = True):
         """Initialize an Agent object.
 
            Arguments
@@ -27,10 +29,14 @@ class Agent():
            seed (int): Random seed
            hidden_layers (list): List of integers, each element represents for the size of a hidden layer
            drop_p (float): Dropout probability
+           double_dqn (logic): Indicator of using double DQN, True or False
+           prioritized_replay (logic): Indicator of using prioritized experience replay, True or False
         """
         self.state_size = state_size
         self.action_size = action_size
         self.seed = random.seed(seed)
+        self.double_dqn = double_dqn
+        self.prioritized_replay = prioritized_replay
 
         # Q network
         self.qnetwork_local = QNetwork(state_size, action_size, seed, hidden_layers, drop_p).to(device)
@@ -77,7 +83,13 @@ class Agent():
         states, actions, rewards, next_states, dones = experiences
 
         # Get max predicted Q values of next states from the target Q network
-        Q_target_next = self.qnetwork_target(next_states).detach().max(1, keepdim = True)[0]
+        if not self.double_dqn:
+            # DQN with fixed Q target
+            Q_target_next = self.qnetwork_target(next_states).detach().max(1, keepdim = True)[0]
+        else:
+            # Double DQN
+            max_actions = self.qnetwork_local(next_states).detach().max(1, keepdim = True)[1]
+            Q_target_next = self.qnetwork_target(next_states).gather(1, max_actions)
         # Compute Q targets for current states
         Q_targets = rewards + (gamma * Q_target_next * (1 - dones))
 
