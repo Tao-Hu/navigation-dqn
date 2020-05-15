@@ -15,6 +15,8 @@ LR = 5e-4               # learning rate
 UPDATE_EVERY = 1000     # how often to update the target network
 ALPHA = 0.6             # alpha parameter for prioritized experience replay
 EPS = 1e-6              # small constant for prioritized experience replay
+BETA = 0.4              # initial beta for prioritized experience replay
+BETA_INCREMENT = 0.001  # increment of beta every sampling
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -67,17 +69,14 @@ class Agent():
         else:
             return random.choice(np.arange(self.action_size))
 
-    def step(self, state, action, reward, next_state, done, beta = 0.5):
+    def step(self, state, action, reward, next_state, done):
         """One step during training."""
         # Save experience in replay memory
         self.memory.add(state, action, reward, next_state, done)
 
         # Update policy Q network weights
         if len(self.memory) > BATCH_SIZE:
-            if not self.prioritized_replay:
-                experiences = self.memory.sample()
-            else:
-                experiences = self.memory.sample(beta)
+            experiences = self.memory.sample()
             self.learn(experiences, GAMMA)
 
         # Update target Q network weights every UPDATE_EVERY steps
@@ -162,7 +161,8 @@ class ReplayBuffer():
         return len(self.memory)
 
 class PrioritizedReplayBuffer():
-    def __init__(self, action_size, buffer_size, batch_size, seed, alpha = ALPHA, eps = EPS):
+    def __init__(self, action_size, buffer_size, batch_size, seed, 
+                 alpha = ALPHA, eps = EPS, beta = BETA, beta_increment = BETA_INCREMENT):
         """Initialize a Prioritized ReplayBuffer object.
 
            Arguments
@@ -172,7 +172,9 @@ class PrioritizedReplayBuffer():
            batch_size (int): Size of each training batch
            seed (int): Random seed
            alpha (float): Alpha parameter
-           eps (float): small constant added to priority
+           eps (float): Small constant added to priority
+           beta (float): Initial beta value
+           beta_increment (float): Increment of beta every sampling
         """
         self.action_size = action_size
         self.memory = deque(maxlen = buffer_size)
@@ -182,6 +184,8 @@ class PrioritizedReplayBuffer():
         self.seed = random.seed(seed)
         self.alpha = alpha
         self.eps = eps
+        self.beta = beta
+        self.beta_increment = beta_increment
         self.max_priority = 1.0
 
     def add(self, state, action, reward, next_action, done):
@@ -192,7 +196,7 @@ class PrioritizedReplayBuffer():
         # set the initial priority of the newly inserted tuple as the current maximum priority
         self.priority.append(self.max_priority ** self.alpha)
 
-    def sample(self, beta):
+    def sample(self):
         """Randomly sample a batch of experiences from memory based on priorities."""
         # sampling probabilities
         priority_array = np.array(self.priority)
@@ -200,7 +204,7 @@ class PrioritizedReplayBuffer():
         # sample by priorities
         idxes = np.random.choice(len(self.priority), self.batch_size, replace = False, p = p_sample)
         # weights
-        is_weights = np.power([len(self.priority) * p_sample[idx] for idx in idxes], -beta)
+        is_weights = np.power([len(self.priority) * p_sample[idx] for idx in idxes], -self.beta)
         max_weight = is_weights.max()
         is_weights = torch.from_numpy(np.vstack([weight / max_weight for weight in is_weights])).float().to(device)
         # states, actions, rewards, next_states, dones
@@ -209,6 +213,8 @@ class PrioritizedReplayBuffer():
         rewards = torch.from_numpy(np.vstack([self.memory[idx].reward for idx in idxes if self.memory[idx] is not None])).float().to(device)
         next_states = torch.from_numpy(np.vstack([self.memory[idx].next_state for idx in idxes if self.memory[idx] is not None])).float().to(device)
         dones = torch.from_numpy(np.vstack([self.memory[idx].done for idx in idxes if self.memory[idx] is not None])).astype(np.uint8).float().to(device)
+        # Anneal beta
+        self.beta = min(1.0, self.beta + self.beta_increment)
 
         return (idxes, states, actions, rewards, next_states, dones, is_weights)
 
