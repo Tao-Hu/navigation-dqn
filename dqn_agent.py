@@ -46,7 +46,10 @@ class Agent():
         self.optimizer = optim.Adam(self.qnetwork_local.parameters(), lr = LR)
 
         # Replay memory
-        self.memory = ReplayBuffer(action_size, BUFFER_SIZE, BATCH_SIZE, seed)
+        if not self.prioritized_replay:
+            self.memory = ReplayBuffer(action_size, BUFFER_SIZE, BATCH_SIZE, seed)
+        else:
+            self.memory = PrioritizedReplayBuffer(action_size, BUFFER_SIZE, BATCH_SIZE, seed)
 
         # time step
         self.t_step = 0
@@ -64,14 +67,17 @@ class Agent():
         else:
             return random.choice(np.arange(self.action_size))
 
-    def step(self, state, action, reward, next_state, done):
+    def step(self, state, action, reward, next_state, done, beta = 0.5):
         """One step during training."""
         # Save experience in replay memory
         self.memory.add(state, action, reward, next_state, done)
 
         # Update policy Q network weights
         if len(self.memory) > BATCH_SIZE:
-            experiences = self.memory.sample()
+            if not self.prioritized_replay:
+                experiences = self.memory.sample()
+            else:
+                experiences = self.memory.sample(beta)
             self.learn(experiences, GAMMA)
 
         # Update target Q network weights every UPDATE_EVERY steps
@@ -82,7 +88,10 @@ class Agent():
 
     def learn(self, experiences, gamma):
         """Update policy Q netowrk weights using given batch of experience tuples."""
-        states, actions, rewards, next_states, dones = experiences
+        if self.prioritized_replay:
+            states, actions, rewards, next_states, dones = experiences
+        else:
+            idxes, states, actions, rewards, next_states, dones, is_weights = experiences
 
         # Get max predicted Q values of next states from the target Q network
         if not self.double_dqn:
@@ -98,8 +107,16 @@ class Agent():
         # Get current estimated Q values from policy Q network
         Q_estimated = self.qnetwork_local(states).gather(1, actions)
 
+        # If use PER, then update the priorities of sampled transitions
+        if self.prioritized_replay:
+            td_errors = (Q_targets - Q_estimated).squeeze(1).cpu().data.numpy()
+            self.memory.update_priority(idxes, td_errors)
+
         # Compute loss
-        loss = F.mse_loss(Q_estimated, Q_targets)
+        if not self.prioritized_replay:
+            loss = F.mse_loss(Q_estimated, Q_targets)
+        else:
+            loss = (is_weights * F.mse_loss(Q_estimated, Q_targets, reduction = 'none')).mean()
         # Minimize the loss and update weights
         self.optimizer.zero_grad()
         loss.backward()
@@ -166,3 +183,38 @@ class PrioritizedReplayBuffer():
         self.alpha = alpha
         self.eps = eps
         self.max_priority = 1.0
+
+    def add(self, state, action, reward, next_action, done):
+        """Add a new experience to memory."""
+        e = self.experience(state, action, reward, next_action, done)
+        # add the observed tuple to memory buffer
+        self.memory.append(e)
+        # set the initial priority of the newly inserted tuple as the current maximum priority
+        self.priority.append(self.max_priority ** self.alpha)
+
+    def sample(self, beta):
+        """Randomly sample a batch of experiences from memory based on priorities."""
+        # sampling probabilities
+        priority_array = np.array(self.priority)
+        p_sample = priority_array / sum(self.priority)
+        # sample by priorities
+        idxes = np.random.choice(len(self.priority), self.batch_size, replace = False, p = p_sample)
+        # weights
+        is_weights = np.power([len(self.priority) * p_sample[idx] for idx in idxes], -beta)
+        max_weight = is_weights.max()
+        is_weights = torch.from_numpy(np.vstack([weight / max_weight for weight in is_weights])).float().to(device)
+        # states, actions, rewards, next_states, dones
+        states = torch.from_numpy(np.vstack([self.memory[idx].state for idx in idxes if self.memory[idx] is not None])).float().to(device)
+        actions = torch.from_numpy(np.vstack([self.memory[idx].action for idx in idxes if self.memory[idx] is not None])).long().to(device)
+        rewards = torch.from_numpy(np.vstack([self.memory[idx].reward for idx in idxes if self.memory[idx] is not None])).float().to(device)
+        next_states = torch.from_numpy(np.vstack([self.memory[idx].next_state for idx in idxes if self.memory[idx] is not None])).float().to(device)
+        dones = torch.from_numpy(np.vstack([self.memory[idx].done for idx in idxes if self.memory[idx] is not None])).astype(np.uint8).float().to(device)
+
+        return (idxes, states, actions, rewards, next_states, dones, is_weights)
+
+    def update_priority(self, idxes, priorities):
+        """Update priorities of sampled transitions."""
+        for idx, priority in zip(idxes, priorities):
+            adj_priority = abs(priority) + self.eps
+            self.priority[idx] = adj_priority ** self.alpha
+            self.max_priority = max(self.max_priority, adj_priority)
