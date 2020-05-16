@@ -65,7 +65,7 @@ class Agent():
         self.qnetwork_local.train()
 
         if random.random() > eps:
-            return np.argmax(action_values.cpu().data.numpy())
+            return np.argmax(action_values.cpu().data.numpy()).astype(int)
         else:
             return random.choice(np.arange(self.action_size))
 
@@ -87,7 +87,7 @@ class Agent():
 
     def learn(self, experiences, gamma):
         """Update policy Q netowrk weights using given batch of experience tuples."""
-        if self.prioritized_replay:
+        if not self.prioritized_replay:
             states, actions, rewards, next_states, dones = experiences
         else:
             idxes, states, actions, rewards, next_states, dones, is_weights = experiences
@@ -152,7 +152,7 @@ class ReplayBuffer():
         actions = torch.from_numpy(np.vstack([e.action for e in experiences if e is not None])).long().to(device)
         rewards = torch.from_numpy(np.vstack([e.reward for e in experiences if e is not None])).float().to(device)
         next_states = torch.from_numpy(np.vstack([e.next_state for e in experiences if e is not None])).float().to(device)
-        dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None])).astype(np.uint8).float().to(device)
+        dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None])).long().to(device)
 
         return (states, actions, rewards, next_states, dones)
 
@@ -212,7 +212,7 @@ class PrioritizedReplayBuffer():
         actions = torch.from_numpy(np.vstack([self.memory[idx].action for idx in idxes if self.memory[idx] is not None])).long().to(device)
         rewards = torch.from_numpy(np.vstack([self.memory[idx].reward for idx in idxes if self.memory[idx] is not None])).float().to(device)
         next_states = torch.from_numpy(np.vstack([self.memory[idx].next_state for idx in idxes if self.memory[idx] is not None])).float().to(device)
-        dones = torch.from_numpy(np.vstack([self.memory[idx].done for idx in idxes if self.memory[idx] is not None])).astype(np.uint8).float().to(device)
+        dones = torch.from_numpy(np.vstack([self.memory[idx].done for idx in idxes if self.memory[idx] is not None])).long().to(device)
         # Anneal beta
         self.beta = min(1.0, self.beta + self.beta_increment)
 
