@@ -224,3 +224,7 @@ class PrioritizedReplayBuffer():
             adj_priority = abs(priority) + self.eps
             self.priority[idx] = adj_priority ** self.alpha
             self.max_priority = max(self.max_priority, adj_priority)
+
+    def __len__(self):
+        """Return the current size of internal memory."""
+        return len(self.memory)
